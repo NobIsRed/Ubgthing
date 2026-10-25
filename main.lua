@@ -10,6 +10,7 @@ local MAIN_WEBHOOK_ACCOUNT = "GHHTWHOWR"
 local COLOR_CURRENT = 3447003
 local COLOR_POS = 3066993
 local COLOR_NEG = 15158332
+local COLOR_MIX = 16776960
 local UBG_INTERVAL = 5
 
 local PAD_1 = Vector3.new(-8, 0, -161)
@@ -131,8 +132,9 @@ getgenv().HttpMethod = "?"
 getgenv().WebhookToggle = getgenv().WebhookToggle or true
 getgenv().WebhookMode = getgenv().WebhookMode or "MAIN"
 getgenv().LastWebhookResult = "none"
-getgenv().LastCashRead = "?"
 getgenv().CashBaseline = "?"
+getgenv().SpinsBaseline = "?"
+getgenv().LuckyBaseline = "?"
 
 local httpRequest, httpMethod = nil, "none"
 for _, c in ipairs({
@@ -317,18 +319,16 @@ local function webhookCurrently()
     })
 end
 
-local function webhookCashChanged(prev, cur)
-    local d = cur - prev
-    local color = d >= 0 and COLOR_POS or COLOR_NEG
+local function webhookStatsChanged(fields, pos, neg)
+    local color
+    if neg == 0 then color = COLOR_POS
+    elseif pos == 0 then color = COLOR_NEG
+    else color = COLOR_MIX end
     return sendWebhook({
         embeds = {{
-            title = "Cash Changed",
+            title = "UBG Stats Changed",
             color = color,
-            fields = {{
-                name = "Cash",
-                value = ("**%s%s** `%s -> %s`"):format(
-                    d >= 0 and "+" or "", fmtNum(d), fmtNum(prev), fmtNum(cur)),
-            }},
+            fields = fields,
             timestamp = DateTime.now():ToIsoDate(),
             footer = { text = footerText() },
         }},
@@ -503,7 +503,9 @@ local ModeLbl = WebhookTab:CreateLabel("Mode: " .. getgenv().WebhookMode, 448336
 local ToggleLbl = WebhookTab:CreateLabel("Toggle: " .. (getgenv().WebhookToggle and "ON" or "OFF"), 4483362458)
 local EffectiveLbl = WebhookTab:CreateLabel("Effective: ?", 4483362458)
 local LastResultLbl = WebhookTab:CreateLabel("Last: none", 4483362458)
-local BaselineLbl = WebhookTab:CreateLabel("Cash baseline: ?", 4483362458)
+local CashBaselineLbl = WebhookTab:CreateLabel("Cash baseline: ?", 4483362458)
+local SpinsBaselineLbl = WebhookTab:CreateLabel("Spins baseline: ?", 4483362458)
+local LuckyBaselineLbl = WebhookTab:CreateLabel("Lucky baseline: ?", 4483362458)
 local UBGStatusLbl = WebhookTab:CreateLabel("UBG labels: ?", 4483362458)
 
 local function refreshStatus()
@@ -514,7 +516,9 @@ local function refreshStatus()
         ToggleLbl:Set("Toggle: " .. (getgenv().WebhookToggle and "ON" or "OFF"))
         EffectiveLbl:Set((ok and "Effective: YES (" or "Effective: NO (") .. reason .. ")")
         LastResultLbl:Set("Last: " .. getgenv().LastWebhookResult)
-        BaselineLbl:Set("Cash baseline: " .. getgenv().CashBaseline)
+        CashBaselineLbl:Set("Cash baseline: " .. (getgenv().CashBaseline or "?"))
+        SpinsBaselineLbl:Set("Spins baseline: " .. (getgenv().SpinsBaseline or "?"))
+        LuckyBaselineLbl:Set("Lucky baseline: " .. (getgenv().LuckyBaseline or "?"))
         UBGStatusLbl:Set("UBG labels: " .. (ubgFound and "FOUND" or "NOT FOUND"))
     end)
 end
@@ -550,15 +554,22 @@ WebhookTab:CreateDropdown({
         task.spawn(function()
             local ok = checkWebhookReason()
             if ok then
-                local sent, reason = webhookCurrently()
+                webhookCurrently()
                 Rayfield:Notify({
-                    Title = sent and "Mode changed + sent" or "Mode changed",
+                    Title = "Mode changed + sent",
                     Content = getgenv().LastWebhookResult,
                     Duration = 4,
                     Image = 4483362458,
                 })
-                refreshStatus()
+            else
+                Rayfield:Notify({
+                    Title = "Mode changed",
+                    Content = getgenv().LastWebhookResult,
+                    Duration = 4,
+                    Image = 4483362458,
+                })
             end
+            refreshStatus()
         end)
     end,
 })
@@ -569,7 +580,7 @@ WebhookTab:CreateButton({
     Name = "Test webhook now",
     Callback = function()
         task.spawn(function()
-            local sent, reason = webhookCurrently()
+            local sent = webhookCurrently()
             Rayfield:Notify({
                 Title = sent and "Sent OK" or "Blocked/Failed",
                 Content = getgenv().LastWebhookResult,
@@ -844,7 +855,7 @@ task.spawn(function()
         local combo = getgenv().Countering and COUNTER_COMBO or COMBOS[getgenv().ComboIdx]
         for _, move in ipairs(combo) do
             if not getgenv().AutoLight or not getgenv().InMatch
-          or getgenv().Blocking or getgenv().Dodging then break end
+                or getgenv().Blocking or getgenv().Dodging then break end
             clickTarget(move[1])
             task.wait(move[2])
         end
@@ -924,32 +935,87 @@ task.spawn(function()
         print("[UBG] Tracker skip - labels not found")
         return
     end
-    print("[UBG] Tracker active")
+    print("[UBG] Tracker active - track spins + cash + lucky")
     local last = readUBG()
     if not last then return end
+
+    local lastSpins = parseNum(last.spins)
     local lastCash = parseNum(last.cash)
+    local lastLucky = parseNum(last.lucky)
+
+    getgenv().SpinsBaseline = lastSpins and fmtNum(lastSpins) or "?"
     getgenv().CashBaseline = lastCash and fmtNum(lastCash) or "?"
+    getgenv().LuckyBaseline = lastLucky and fmtNum(lastLucky) or "?"
     refreshStatus()
 
     while true do
         task.wait(UBG_INTERVAL)
         local cur = readUBG()
         if not cur then break end
+
+        local curSpins = parseNum(cur.spins)
         local curCash = parseNum(cur.cash)
+        local curLucky = parseNum(cur.lucky)
+
+        local fields = {}
+        local pos, neg = 0, 0
+
+        if curSpins and lastSpins and curSpins ~= lastSpins then
+            local d = curSpins - lastSpins
+            if d >= 0 then pos = pos + 1 else neg = neg + 1 end
+            table.insert(fields, {
+                name = "Spins",
+                value = ("**%s%s** `%s -> %s`"):format(
+                    d >= 0 and "+" or "", fmtNum(d),
+                    fmtNum(lastSpins), fmtNum(curSpins)),
+            })
+            lastSpins = curSpins
+            getgenv().SpinsBaseline = fmtNum(lastSpins)
+        else
+            if curSpins then lastSpins = curSpins end
+        end
+
         if curCash and lastCash and curCash ~= lastCash then
-            print(string.format("[CASH] %s -> %s", fmtNum(lastCash), fmtNum(curCash)))
-            local ok, reason = checkWebhookReason()
-            if ok then
-                webhookCashChanged(lastCash, curCash)
-            else
-                print("[CASH] skip: " .. reason)
-                getgenv().LastWebhookResult = "skip: " .. reason
-            end
+            local d = curCash - lastCash
+            if d >= 0 then pos = pos + 1 else neg = neg + 1 end
+            table.insert(fields, {
+                name = "Cash",
+                value = ("**%s%s** `%s -> %s`"):format(
+                    d >= 0 and "+" or "", fmtNum(d),
+                    fmtNum(lastCash), fmtNum(curCash)),
+            })
             lastCash = curCash
             getgenv().CashBaseline = fmtNum(lastCash)
         else
             if curCash then lastCash = curCash end
         end
+
+        if curLucky and lastLucky and curLucky ~= lastLucky then
+            local d = curLucky - lastLucky
+            if d >= 0 then pos = pos + 1 else neg = neg + 1 end
+            table.insert(fields, {
+                name = "Lucky Spins",
+                value = ("**%s%s** `%s -> %s`"):format(
+                    d >= 0 and "+" or "", fmtNum(d),
+                    fmtNum(lastLucky), fmtNum(curLucky)),
+            })
+            lastLucky = curLucky
+            getgenv().LuckyBaseline = fmtNum(lastLucky)
+        else
+            if curLucky then lastLucky = curLucky end
+        end
+
+        if #fields > 0 then
+            print(string.format("[STATS] %d change(s) detected", #fields))
+            local ok, reason = checkWebhookReason()
+            if ok then
+                webhookStatsChanged(fields, pos, neg)
+            else
+                print("[STATS] skip: " .. reason)
+                getgenv().LastWebhookResult = "skip: " .. reason
+            end
+        end
+
         refreshStatus()
     end
 end)
@@ -964,3 +1030,4 @@ Rayfield:Notify({
 print(string.format("[AI v22] %s | %s | target=%s | mode=%s main=%s toggle=%s HTTP=%s",
     MY_NAME, WHO, MY_TARGET_NAME or "NONE",
     getgenv().WebhookMode, tostring(IS_MAIN_ACCOUNT), tostring(getgenv().WebhookToggle), httpMethod))
+    
