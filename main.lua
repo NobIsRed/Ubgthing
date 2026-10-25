@@ -18,7 +18,7 @@ local PAD_2 = Vector3.new(16, 0, -162)
 
 local PAIRS = {
     { "GHHTWHOWR", "GHfhahfiuaf2" },
-    { "GHfhahfiuaf2", "GHfhahfiuaf3" }
+    { "GHfhahfiuaf2", "GHfhahfiuaf3" },
     { "GHHTWHOWR", "GHfhahfiuaf3" }
 }
 
