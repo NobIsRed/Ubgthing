@@ -13,54 +13,35 @@ local COLOR_NEG = 15158332
 local COLOR_MIX = 16776960
 local UBG_INTERVAL = 5
 
-local PAD_1 = Vector3.new(-8, 0, -161)
-local PAD_2 = Vector3.new(16, 0, -162)
-
-local PAIRS = {
-    { "GHHTWHOWR", "GHfhahfiuaf2" },
-    { "GHfhahfiuaf2", "GHfhahfiuaf3" },
+local PADS = {
+    ["Pad 1"] = Vector3.new(-8, 0, -161),
+    ["Pad 2"] = Vector3.new(16, 0, -162),
 }
 
-local MY_NAME = LP.Name
-local IS_MAIN_ACCOUNT = (MY_NAME == MAIN_WEBHOOK_ACCOUNT)
-local MY_TARGET_NAME, IS_PLAYER_2, WHO, MY_PAD, PAIR_LABEL
-
-local function recomputePair()
-    local oldTarget = MY_TARGET_NAME
-    local candidates = {}
-    for i, pair in ipairs(PAIRS) do
-        if MY_NAME == pair[1] then
-            table.insert(candidates, { target = pair[2], role = "P1", idx = i })
-        elseif MY_NAME == pair[2] then
-            table.insert(candidates, { target = pair[1], role = "P2", idx = i })
-        end
-    end
-    if #candidates == 0 then
-        MY_TARGET_NAME, IS_PLAYER_2, PAIR_LABEL = nil, false, "-"
-        WHO, MY_PAD = "P1", PAD_1
-        return
-    end
-    local chosen = nil
-    for _, c in ipairs(candidates) do
-        if Players:FindFirstChild(c.target) then chosen = c; break end
-    end
-    if not chosen then chosen = candidates[1] end
-    MY_TARGET_NAME = chosen.target
-    IS_PLAYER_2 = (chosen.role == "P2")
-    PAIR_LABEL = "#" .. chosen.idx
-    WHO = IS_PLAYER_2 and "P2" or "P1"
-    MY_PAD = IS_PLAYER_2 and PAD_2 or PAD_1
-    if oldTarget ~= MY_TARGET_NAME then
-        print(string.format("[PAIR] %s -> %s (%s, pair %s)", MY_NAME, MY_TARGET_NAME, WHO, PAIR_LABEL))
-    end
+-- ===== TARGET WHITELIST =====
+local TARGET_WHITELIST = {
+    ["GHHTWHOWR"]    = true,
+    ["GHfhahfiuaf2"] = true,
+    ["GHfhahfiuaf3"] = true,
+}
+local WHITELIST_LOWER = {}
+for name in pairs(TARGET_WHITELIST) do
+    WHITELIST_LOWER[name:lower()] = name
 end
-recomputePair()
 
-local CAN_ULT = true
-local DELAY_BEFORE_FIGHT = 1.5
+local MY_NAME = LP.Name
+local MY_NAME_LOWER = MY_NAME:lower()
+local IS_MAIN_ACCOUNT = (MY_NAME == MAIN_WEBHOOK_ACCOUNT)
+
+getgenv().SelectedPad = getgenv().SelectedPad or "Pad 1"
+getgenv().PadPosition = PADS[getgenv().SelectedPad] or PADS["Pad 1"]
+
+local function isPad2()
+    return getgenv().SelectedPad == "Pad 2"
+end
+
 local MATCH_END_DEBOUNCE = 2.0
-local ATTACK_RANGE = 10
-local TP_OFFSET = 3.5
+local TP_OFFSET = 4
 local COMBO_PAUSE_MIN = 0.20
 local COMBO_PAUSE_MAX = 0.50
 local BLOCK_KEY = Enum.KeyCode.F
@@ -70,11 +51,6 @@ local COUNTER_DURATION = 1.2
 local STAMINA_LOW = 20
 local STAMINA_BLOCK_DUR = 2.0
 local STAMINA_BLOCK_CD = 2.5
-local ULT_KEY = Enum.KeyCode.Q
-local ULT_HOLD = 0.15
-local ULT_COOLDOWN_MIN = 10.0
-local ULT_COOLDOWN_MAX = 16.0
-local ULT_BUFFER_MAX = 5.0
 local DODGE_CHECK_INTERVAL = 0.20
 local DODGE_CHANCE = 0.55
 local DODGE_HOLD = 0.12
@@ -110,11 +86,11 @@ local COUNTER_COMBO = {
 }
 
 getgenv().AutoTP = false
-getgenv().AutoFight = false
 getgenv().AutoLight = false
 getgenv().AutoDodge = true
 getgenv().AutoBlock = true
 getgenv().TPBusy = false
+getgenv().TpToOppDone = false
 getgenv().InMatch = false
 getgenv().Blocking = false
 getgenv().Countering = false
@@ -122,8 +98,6 @@ getgenv().Dodging = false
 getgenv().ComboIdx = 1
 getgenv().DodgeCount = 0
 getgenv().CounterCount = 0
-getgenv().UltCount = 0
-getgenv().UltFails = 0
 getgenv().StaminaBlocks = 0
 getgenv().MatchStartTick = nil
 getgenv().WebhookSent = 0
@@ -180,21 +154,16 @@ local function loadRayfield()
 end
 local Rayfield = loadRayfield()
 if not Rayfield then
-    warn("[AI v22] Rayfield fail, stop")
+    warn("[AI v28] Rayfield fail, stop")
     return
 end
-print("[AI v22] Rayfield loaded, HTTP=" .. httpMethod)
+print("[AI v28] Rayfield loaded, HTTP=" .. httpMethod)
+print(string.format("[AI v28] ME=%s | Whitelist: GHHTWHOWR, GHfhahfiuaf2, GHfhahfiuaf3", MY_NAME))
 
 local function checkWebhookReason()
-    if getgenv().WebhookMode == "ALL" then
-        return true, "ALL mode"
-    end
-    if not IS_MAIN_ACCOUNT then
-        return false, "not main (mode=MAIN)"
-    end
-    if not getgenv().WebhookToggle then
-        return false, "toggle OFF (mode=MAIN)"
-    end
+    if getgenv().WebhookMode == "ALL" then return true, "ALL mode" end
+    if not IS_MAIN_ACCOUNT then return false, "not main (mode=MAIN)" end
+    if not getgenv().WebhookToggle then return false, "toggle OFF (mode=MAIN)" end
     return true, "main + toggle ON"
 end
 
@@ -340,17 +309,8 @@ local function getHRP()
     return c and c:FindFirstChild("HumanoidRootPart")
 end
 
-local function getTargetHRP()
-    if not MY_TARGET_NAME then return nil end
-    local opp = Players:FindFirstChild(MY_TARGET_NAME)
-    if not opp or not opp.Character then return nil end
-    local hum = opp.Character:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health <= 0 then return nil end
-    return opp.Character:FindFirstChild("HumanoidRootPart")
-end
-
-local function readOpponentValue()
-    local val
+local function readRawOpponent()
+    local raw
     pcall(function()
         local st = workspace:FindFirstChild("States")
         if not st then return end
@@ -359,9 +319,52 @@ local function readOpponentValue()
         local d = me:FindFirstChild("CharacterData")
         if not d then return end
         local o = d:FindFirstChild("Opponent")
-        if o then val = o.Value end
+        if o then raw = o.Value end
     end)
-    return val
+    return raw
+end
+
+local function normalizeName(v)
+    if v == nil then return nil end
+    local t = typeof(v)
+    if t == "string" then
+        local s = v:gsub("^%s+", ""):gsub("%s+$", "")
+        if s ~= "" then return s end
+        return nil
+    end
+    if t == "Instance" then
+        if v.Name and v.Name ~= "" then return v.Name end
+        return nil
+    end
+    if t == "number" then
+        local p = Players:GetPlayerByUserId(v)
+        if p then return p.Name end
+        return nil
+    end
+    if t == "table" and v.Name then
+        return tostring(v.Name)
+    end
+    return nil
+end
+
+local function readOpponentName()
+    local raw = readRawOpponent()
+    local name = normalizeName(raw)
+    if not name or name == "" then return nil end
+    if name:lower() == MY_NAME_LOWER then return nil end
+    local canonical = WHITELIST_LOWER[name:lower()]
+    if not canonical then return nil end
+    return canonical
+end
+
+local function getOpponentHRP()
+    local name = readOpponentName()
+    if not name then return nil end
+    local opp = Players:FindFirstChild(name)
+    if not opp or not opp.Character then return nil end
+    local hum = opp.Character:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then return nil end
+    return opp.Character:FindFirstChild("HumanoidRootPart")
 end
 
 local function readMyHealth()
@@ -397,8 +400,7 @@ local function readMyStamina()
 end
 
 local function isMatchActive()
-    local v = readOpponentValue()
-    return v ~= nil and v ~= ""
+    return readOpponentName() ~= nil
 end
 
 local function clickAt(sx, sy, button)
@@ -409,7 +411,7 @@ local function clickAt(sx, sy, button)
 end
 
 local function clickTarget(button)
-    local target = getTargetHRP()
+    local target = getOpponentHRP()
     if not target then return false end
     local cam = workspace.CurrentCamera
     if not cam then return false end
@@ -425,24 +427,19 @@ local function keyEvent(pressed, key)
     pcall(function() VIM:SendKeyEvent(pressed, key, false, nil) end)
 end
 
-local function fireUlt()
-    local ok, err = pcall(function()
-        VIM:SendKeyEvent(true, ULT_KEY, false, nil)
-        task.wait(ULT_HOLD)
-        VIM:SendKeyEvent(false, ULT_KEY, false, nil)
-    end)
-    if ok then
-        getgenv().UltCount = getgenv().UltCount + 1
-        return true
-    else
-        getgenv().UltFails = getgenv().UltFails + 1
-        return false
-    end
+local function tpToOpponentOnce()
+    local hrp = getHRP()
+    local target = getOpponentHRP()
+    if not hrp or not target then return false, "no hrp/target" end
+    local dir = hrp.Position - target.Position
+    if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
+    hrp.CFrame = CFrame.lookAt(target.Position + dir.Unit * TP_OFFSET, target.Position)
+    return true
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "AI v22 BATTLE",
-    LoadingTitle = "AI v22 BATTLE",
+    Name = "AI v28 BATTLE",
+    LoadingTitle = "AI v28 BATTLE",
     LoadingSubtitle = "Loading",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
@@ -451,31 +448,76 @@ local Window = Rayfield:CreateWindow({
 local MainTab = Window:CreateTab("Main", 4483362458)
 MainTab:CreateSection("Account")
 local SelfLabel = MainTab:CreateLabel(
-    string.format("%s | %s | target: %s", MY_NAME, WHO, MY_TARGET_NAME or "none"), 4483362458)
+    string.format("%s | PAD: %s | Opp: none", MY_NAME, getgenv().SelectedPad), 4483362458)
+
+MainTab:CreateSection("Pad Selection")
+
+local padOptions = {}
+for name, _ in pairs(PADS) do
+    table.insert(padOptions, name)
+end
+table.sort(padOptions)
+
+MainTab:CreateDropdown({
+    Name = "Chọn PAD",
+    Options = padOptions,
+    CurrentOption = { getgenv().SelectedPad },
+    MultipleOptions = false,
+    Callback = function(opt)
+        local v = type(opt) == "table" and opt[1] or opt
+        if not v or not PADS[v] then return end
+        getgenv().SelectedPad = v
+        getgenv().PadPosition = PADS[v]
+        print(string.format("[PAD] Selected: %s = (%.0f, %.0f, %.0f) | TP-to-opp: %s",
+            v, PADS[v].X, PADS[v].Y, PADS[v].Z, isPad2() and "YES" or "NO"))
+        pcall(function()
+            Rayfield:Notify({
+                Title = "PAD changed",
+                Content = v .. (isPad2() and " (TP to opp)" or " (no TP)"),
+                Duration = 2,
+                Image = 4483362458,
+            })
+        end)
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "🔄 Teleport về PAD đã chọn",
+    Callback = function()
+        task.spawn(function()
+            local hrp = getHRP()
+            if not hrp then return end
+            local p = getgenv().PadPosition
+            hrp.CFrame = CFrame.new(p.X, p.Y + 50, p.Z)
+            for _ = 1, 20 do
+                if hrp.Position.Y <= p.Y + 1 then break end
+                hrp.CFrame = CFrame.new(p.X, hrp.Position.Y - 5, p.Z)
+                task.wait(0.08)
+            end
+            pcall(function()
+                Rayfield:Notify({
+                    Title = "Teleported",
+                    Content = getgenv().SelectedPad,
+                    Duration = 2,
+                    Image = 4483362458,
+                })
+            end)
+        end)
+    end,
+})
 
 MainTab:CreateSection("Automation")
 
 local _codeUpdate = false
-local FightToggle, LightToggle, TPToggle, DodgeToggle, BlockToggle
+local TPToggle, LightToggle, DodgeToggle, BlockToggle
 
-local function uiSetLight(v)
-    if _codeUpdate then return end
-    getgenv().AutoLight = v
-end
-local function uiSetFight(v)
-    if _codeUpdate then return end
-    getgenv().AutoFight = v
-    if v and not getgenv().AutoLight then
-        getgenv().AutoLight = true
-        _codeUpdate = true
-        if LightToggle then LightToggle:Set(true) end
-        _codeUpdate = false
-    end
-end
 local function uiSetTP(v)
     if _codeUpdate then return end
     getgenv().AutoTP = v
     if v then getgenv().TPBusy = false end
+end
+local function uiSetLight(v)
+    if not _codeUpdate then getgenv().AutoLight = v end
 end
 local function uiSetDodge(v)
     if not _codeUpdate then getgenv().AutoDodge = v end
@@ -489,16 +531,15 @@ local function uiSetBlock(v)
     end
 end
 
-FightToggle = MainTab:CreateToggle({ Name = "Fight", CurrentValue = false, Callback = uiSetFight })
-LightToggle = MainTab:CreateToggle({ Name = "Auto Light", CurrentValue = false, Callback = uiSetLight })
-TPToggle = MainTab:CreateToggle({ Name = "TP PAD", CurrentValue = false, Callback = uiSetTP })
+TPToggle = MainTab:CreateToggle({ Name = "Auto TP Pad", CurrentValue = false, Callback = uiSetTP })
+LightToggle = MainTab:CreateToggle({ Name = "Auto Light (Combo)", CurrentValue = false, Callback = uiSetLight })
 DodgeToggle = MainTab:CreateToggle({ Name = "Auto Evade", CurrentValue = true, Callback = uiSetDodge })
 BlockToggle = MainTab:CreateToggle({ Name = "Auto Block", CurrentValue = true, Callback = uiSetBlock })
 
+-- ===== WEBHOOK TAB =====
 local WebhookTab = Window:CreateTab("Webhook", 4483362458)
 WebhookTab:CreateSection("Status")
 
-local HttpLbl = WebhookTab:CreateLabel("HTTP: " .. httpMethod, 4483362458)
 local ModeLbl = WebhookTab:CreateLabel("Mode: " .. getgenv().WebhookMode, 4483362458)
 local ToggleLbl = WebhookTab:CreateLabel("Toggle: " .. (getgenv().WebhookToggle and "ON" or "OFF"), 4483362458)
 local EffectiveLbl = WebhookTab:CreateLabel("Effective: ?", 4483362458)
@@ -542,7 +583,6 @@ WebhookTab:CreateDropdown({
     MultipleOptions = false,
     Callback = function(opt)
         local v = type(opt) == "table" and opt[1] or opt
-        print("[WEBHOOK] Dropdown raw: " .. tostring(v))
         if not v then return end
         if string.find(v, "MAIN") then
             getgenv().WebhookMode = "MAIN"
@@ -551,26 +591,6 @@ WebhookTab:CreateDropdown({
         end
         print("[WEBHOOK] Mode -> " .. getgenv().WebhookMode)
         refreshStatus()
-        task.spawn(function()
-            local ok = checkWebhookReason()
-            if ok then
-                webhookCurrently()
-                Rayfield:Notify({
-                    Title = "Mode changed + sent",
-                    Content = getgenv().LastWebhookResult,
-                    Duration = 4,
-                    Image = 4483362458,
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Mode changed",
-                    Content = getgenv().LastWebhookResult,
-                    Duration = 4,
-                    Image = 4483362458,
-                })
-            end
-            refreshStatus()
-        end)
     end,
 })
 
@@ -592,29 +612,9 @@ WebhookTab:CreateButton({
     end,
 })
 
-WebhookTab:CreateButton({
-    Name = "Force send (bypass mode/toggle)",
-    Callback = function()
-        task.spawn(function()
-            local oldMode, oldToggle = getgenv().WebhookMode, getgenv().WebhookToggle
-            getgenv().WebhookMode = "ALL"
-            getgenv().WebhookToggle = true
-            local sent = webhookCurrently()
-            getgenv().WebhookMode = oldMode
-            getgenv().WebhookToggle = oldToggle
-            Rayfield:Notify({
-                Title = sent and "Force sent OK" or "Force FAILED",
-                Content = getgenv().LastWebhookResult,
-                Duration = 4,
-                Image = 4483362458,
-            })
-            refreshStatus()
-        end)
-    end,
-})
-
 refreshStatus()
 
+-- ===== STATS TAB =====
 local StatsTab = Window:CreateTab("Stats", 4483362458)
 StatsTab:CreateSection("Battle")
 
@@ -623,9 +623,11 @@ local BlockLbl = StatsTab:CreateLabel("Blocking: OFF", 4483362458)
 local DodgeLbl = StatsTab:CreateLabel("Dodges: 0", 4483362458)
 local CounterLbl = StatsTab:CreateLabel("Counters: 0", 4483362458)
 local StaminaBlockLbl = StatsTab:CreateLabel("Stamina Blocks: 0", 4483362458)
-local UltLbl = StatsTab:CreateLabel("ULT: 0 (F:0)", 4483362458)
 local WebhookCounterLbl = StatsTab:CreateLabel("Webhook: 0 (F:0)", 4483362458)
 local ComboLbl = StatsTab:CreateLabel("Combo: #1/" .. #COMBOS, 4483362458)
+local OppLbl = StatsTab:CreateLabel("Opponent: none", 4483362458)
+local RawOppLbl = StatsTab:CreateLabel("Raw: none | Type: -", 4483362458)
+local ModeLbl2 = StatsTab:CreateLabel("Mode: Pad 1 (no TP)", 4483362458)
 
 task.spawn(function()
     while task.wait(0.5) do
@@ -636,32 +638,36 @@ task.spawn(function()
             DodgeLbl:Set("Dodges: " .. getgenv().DodgeCount)
             CounterLbl:Set("Counters: " .. getgenv().CounterCount)
             StaminaBlockLbl:Set("Stamina Blocks: " .. getgenv().StaminaBlocks)
-            UltLbl:Set(string.format("ULT: %d (F:%d)", getgenv().UltCount, getgenv().UltFails))
             WebhookCounterLbl:Set(string.format("Webhook: %d (F:%d)", getgenv().WebhookSent, getgenv().WebhookFailed))
             ComboLbl:Set(string.format("Combo: #%d/%d", getgenv().ComboIdx, #COMBOS))
+            OppLbl:Set("Opponent: " .. (readOpponentName() or "none"))
+            ModeLbl2:Set("Mode: " .. getgenv().SelectedPad .. (isPad2() and " (TP to opp)" or " (no TP)"))
+            local raw = readRawOpponent()
+            local rawStr = "nil"
+            local rawType = "nil"
+            if raw ~= nil then
+                rawType = typeof(raw)
+                if rawType == "Instance" then
+                    rawStr = raw.Name or raw.ClassName
+                else
+                    rawStr = tostring(raw)
+                end
+            end
+            RawOppLbl:Set(string.format("Raw: %s | Type: %s", rawStr, rawType))
         end)
     end
 end)
 
 task.spawn(function()
-    while task.wait(5) do
-        if getgenv().InMatch then continue end
-        local oldTarget = MY_TARGET_NAME
-        recomputePair()
+    while task.wait(1) do
         pcall(function()
-            SelfLabel:Set(string.format("%s | %s | target: %s", MY_NAME, WHO, MY_TARGET_NAME or "none"))
+            SelfLabel:Set(string.format("%s | PAD: %s | Opp: %s",
+                MY_NAME, getgenv().SelectedPad, readOpponentName() or "none"))
         end)
-        if oldTarget ~= MY_TARGET_NAME then
-            Rayfield:Notify({
-                Title = "Target changed",
-                Content = string.format("%s -> %s", tostring(oldTarget), tostring(MY_TARGET_NAME)),
-                Duration = 3,
-                Image = 4483362458,
-            })
-        end
     end
 end)
 
+-- ===== MATCH DETECTION + TP (chỉ Pad 2) + AUTO COMBO =====
 task.spawn(function()
     local matchEndAt = nil
     while task.wait(0.3) do
@@ -671,18 +677,45 @@ task.spawn(function()
             if not getgenv().InMatch then
                 getgenv().InMatch = true
                 getgenv().MatchStartTick = tick()
-                print("[MATCH] Started")
+                getgenv().TpToOppDone = false
+                getgenv().AutoTP = false
+                _codeUpdate = true
+                if TPToggle then TPToggle:Set(false) end
+                _codeUpdate = false
+
+                local padMode = isPad2() and "PAD 2 (TP)" or "PAD 1 (no TP)"
+                print("[MATCH] Started | opp=" .. tostring(readOpponentName()) .. " | " .. padMode)
+
+                -- Bật Auto Light (combo) tự động
                 task.spawn(function()
-                    task.wait(DELAY_BEFORE_FIGHT)
-                    if getgenv().InMatch and not getgenv().AutoFight then
-                        getgenv().AutoFight = true
+                    task.wait(0.5)
+                    if getgenv().InMatch and not getgenv().AutoLight then
                         getgenv().AutoLight = true
                         _codeUpdate = true
-                        if FightToggle then FightToggle:Set(true) end
                         if LightToggle then LightToggle:Set(true) end
                         _codeUpdate = false
                     end
                 end)
+
+                -- CHỈ Pad 2 mới TP tới opponent
+                if isPad2() then
+                    task.spawn(function()
+                        for i = 1, 20 do
+                            if not getgenv().InMatch then return end
+                            if not isPad2() then return end -- đổi pad giữa trận → ngưng TP
+                            local ok, reason = tpToOpponentOnce()
+                            if ok then
+                                getgenv().TpToOppDone = true
+                                print("[MATCH] PAD 2 -> TP to opponent (try #" .. i .. ")")
+                                return
+                            end
+                            task.wait(0.5)
+                        end
+                        warn("[MATCH] PAD 2 TP failed after 10s - opponent char chưa load?")
+                    end)
+                else
+                    print("[MATCH] PAD 1 -> không TP, đứng yên")
+                end
             end
         else
             if getgenv().InMatch then
@@ -690,64 +723,43 @@ task.spawn(function()
                     matchEndAt = tick()
                 elseif tick() - matchEndAt >= MATCH_END_DEBOUNCE then
                     getgenv().InMatch = false
-                    getgenv().AutoTP = true
+                    getgenv().TpToOppDone = false
                     getgenv().DodgeCount = 0
                     getgenv().CounterCount = 0
-                    getgenv().UltCount = 0
-                    getgenv().UltFails = 0
                     getgenv().StaminaBlocks = 0
                     getgenv().MatchStartTick = nil
                     matchEndAt = nil
+                    getgenv().AutoTP = true
                     _codeUpdate = true
                     if TPToggle then TPToggle:Set(true) end
                     _codeUpdate = false
+                    print("[MATCH] Ended -> TP pad")
                 end
             end
         end
     end
 end)
 
-task.spawn(function()
-    while task.wait(0.5) do
-        if getgenv().AutoFight and not getgenv().AutoLight then
-            getgenv().AutoLight = true
-            _codeUpdate = true
-            if LightToggle then LightToggle:Set(true) end
-            _codeUpdate = false
-        end
-    end
-end)
-
+-- ===== AUTO TP PAD =====
 task.spawn(function()
     while task.wait(0.5) do
         if not getgenv().AutoTP or getgenv().TPBusy then continue end
-        if getgenv().InMatch then
-            getgenv().AutoTP = false
-            _codeUpdate = true
-            if TPToggle then TPToggle:Set(false) end
-            _codeUpdate = false
-            continue
-        end
+        if getgenv().InMatch then continue end
         getgenv().TPBusy = true
         pcall(function()
             local hrp = getHRP()
             if not hrp then return end
-            hrp.CFrame = CFrame.new(MY_PAD.X, MY_PAD.Y + 50, MY_PAD.Z)
+            local p = getgenv().PadPosition
+            hrp.CFrame = CFrame.new(p.X, p.Y + 50, p.Z)
             for _ = 1, 20 do
                 if not getgenv().AutoTP then return end
-                if hrp.Position.Y <= MY_PAD.Y + 1 then break end
-                hrp.CFrame = CFrame.new(MY_PAD.X, hrp.Position.Y - 5, MY_PAD.Z)
+                if hrp.Position.Y <= p.Y + 1 then break end
+                hrp.CFrame = CFrame.new(p.X, hrp.Position.Y - 5, p.Z)
                 task.wait(0.08)
             end
             for _ = 1, 40 do
                 if not getgenv().AutoTP then return end
-                if isMatchActive() then
-                    getgenv().AutoTP = false
-                    _codeUpdate = true
-                    if TPToggle then TPToggle:Set(false) end
-                    _codeUpdate = false
-                    return
-                end
+                if isMatchActive() then return end
                 task.wait(0.5)
             end
         end)
@@ -755,37 +767,13 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while task.wait(0.1) do
-        if not getgenv().AutoFight or not getgenv().InMatch then continue end
-        pcall(function()
-            local hrp = getHRP()
-            local target = getTargetHRP()
-            if not hrp or not target then return end
-            local dist = (target.Position - hrp.Position).Magnitude
-            if dist > ATTACK_RANGE and not getgenv().Dodging then
-                local dir = hrp.Position - target.Position
-                if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
-                hrp.CFrame = CFrame.lookAt(target.Position + dir.Unit * TP_OFFSET, target.Position)
-                return
-            end
-            if not getgenv().Dodging then
-                local look = Vector3.new(target.Position.X, hrp.Position.Y, target.Position.Z)
-                local diff = look - hrp.Position
-                if diff.Magnitude > 0.01 and hrp.CFrame.LookVector:Dot(diff.Unit) < 0.7 then
-                    hrp.CFrame = CFrame.lookAt(hrp.Position, look)
-                end
-            end
-        end)
-    end
-end)
-
+-- ===== AUTO BLOCK =====
 task.spawn(function()
     local lastHealth, blockUntil, blockCooldownUntil = nil, 0, 0
     local counterUntil, wasBlocking = 0, false
     local staminaBlockUntil, staminaCooldownUntil = 0, 0
     while task.wait(0.05) do
-        local canBlock = getgenv().AutoBlock and getgenv().AutoFight and getgenv().InMatch
+        local canBlock = getgenv().AutoBlock and getgenv().InMatch
         if not canBlock then
             if getgenv().Blocking then
                 getgenv().Blocking = false
@@ -825,29 +813,7 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    local ultReadyAt = tick() + math.random(3, 6)
-    local pendingSince = nil
-    while task.wait(0.1) do
-        if not CAN_ULT or not getgenv().AutoFight or not getgenv().InMatch then
-            pendingSince = nil
-            continue
-        end
-        local now = tick()
-        if now < ultReadyAt then continue end
-        if getgenv().Blocking then
-            if not pendingSince then pendingSince = now end
-            if now - pendingSince < ULT_BUFFER_MAX then continue end
-        end
-        if fireUlt() then
-            ultReadyAt = now + ULT_COOLDOWN_MIN + math.random() * (ULT_COOLDOWN_MAX - ULT_COOLDOWN_MIN)
-            pendingSince = nil
-        else
-            ultReadyAt = now + 1.0
-        end
-    end
-end)
-
+-- ===== AUTO COMBO =====
 task.spawn(function()
     while task.wait(0.05) do
         if not getgenv().AutoLight or not getgenv().InMatch
@@ -868,6 +834,7 @@ task.spawn(function()
     end
 end)
 
+-- ===== AUTO EVADE =====
 local function doDodge(jumpOnly)
     if jumpOnly then
         keyEvent(true, Enum.KeyCode.Space)
@@ -886,7 +853,7 @@ end
 task.spawn(function()
     while task.wait(DODGE_CHECK_INTERVAL) do
         if not getgenv().AutoDodge then continue end
-        if not getgenv().AutoFight or not getgenv().InMatch then continue end
+        if not getgenv().InMatch then continue end
         if getgenv().Blocking or getgenv().Dodging then continue end
         if math.random() < DODGE_CHANCE then
             getgenv().Dodging = true
@@ -895,15 +862,15 @@ task.spawn(function()
                 doDodge(math.random() < DODGE_JUMP_ONLY_CHANCE)
                 if math.random() < DODGE_CHAIN_CHANCE then
                     task.wait(DODGE_CHAIN_DELAY)
-                    if getgenv().AutoDodge and getgenv().AutoFight
-                        and getgenv().InMatch and not getgenv().Blocking then
+                    if getgenv().AutoDodge and getgenv().InMatch
+                        and not getgenv().Blocking then
                         getgenv().DodgeCount = getgenv().DodgeCount + 1
                         doDodge(math.random() < DODGE_JUMP_ONLY_CHANCE)
                     end
                     if math.random() < DODGE_TRIPLE_CHANCE then
                         task.wait(DODGE_CHAIN_DELAY)
-                        if getgenv().AutoDodge and getgenv().AutoFight
-                            and getgenv().InMatch and not getgenv().Blocking then
+                        if getgenv().AutoDodge and getgenv().InMatch
+                            and not getgenv().Blocking then
                             getgenv().DodgeCount = getgenv().DodgeCount + 1
                             doDodge(math.random() < DODGE_JUMP_ONLY_CHANCE)
                         end
@@ -916,6 +883,7 @@ task.spawn(function()
     end
 end)
 
+-- ===== STARTUP WEBHOOK =====
 task.spawn(function()
     task.wait(1.0)
     waitForUBG(3)
@@ -929,6 +897,7 @@ task.spawn(function()
     refreshStatus()
 end)
 
+-- ===== UBG TRACKER =====
 task.spawn(function()
     waitForUBG(6)
     if not readUBG() then
@@ -948,7 +917,8 @@ task.spawn(function()
     getgenv().LuckyBaseline = lastLucky and fmtNum(lastLucky) or "?"
     refreshStatus()
 
-    while true do
+    getgenv().StopWebhook = false
+    while not getgenv().StopWebhook do
         task.wait(UBG_INTERVAL)
         local cur = readUBG()
         if not cur then break end
@@ -1021,12 +991,166 @@ task.spawn(function()
 end)
 
 Rayfield:Notify({
-    Title = "AI v22 BATTLE",
-    Content = string.format("%s | %s | target: %s", MY_NAME, WHO, MY_TARGET_NAME or "none"),
+    Title = "AI v28 BATTLE",
+    Content = string.format("%s | PAD: %s%s", MY_NAME, getgenv().SelectedPad,
+        isPad2() and " (TP)" or " (no TP)"),
     Duration = 6,
     Image = 4483362458,
 })
 
-print(string.format("[AI v22] %s | %s | target=%s | mode=%s main=%s toggle=%s HTTP=%s",
-    MY_NAME, WHO, MY_TARGET_NAME or "NONE",
-    getgenv().WebhookMode, tostring(IS_MAIN_ACCOUNT), tostring(getgenv().WebhookToggle), httpMethod))
+print(string.format("[AI v28] %s | PAD=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | HTTP=%s",
+    MY_NAME, getgenv().SelectedPad,
+    getgenv().PadPosition.X, getgenv().PadPosition.Y, getgenv().PadPosition.Z,
+    isPad2() and "YES" or "NO", httpMethod))
+
+-- ============================================================
+-- 💔 FLOATING STOP BUTTON — ✗ / ✓ (bottom-left, mobile)
+-- ============================================================
+do
+    local UIS = game:GetService("UserInputService")
+    local TweenService = game:GetService("TweenService")
+
+    local old = PG:FindFirstChild("StopEverythingBtn")
+    if old then old:Destroy() end
+
+    local COL_RED   = Color3.fromRGB(220, 38, 38)
+    local COL_GREEN = Color3.fromRGB(34, 197, 94)
+    local BASE_W, BASE_H = 190, 52
+
+    local btn = Instance.new("TextButton")
+    btn.Name              = "StopEverythingBtn"
+    btn.Size              = UDim2.fromOffset(BASE_W, BASE_H)
+    btn.Position          = UDim2.new(0, 16, 1, -100)
+    btn.BackgroundColor3  = COL_RED
+    btn.TextColor3        = Color3.fromRGB(255, 255, 255)
+    btn.Font              = Enum.Font.GothamBold
+    btn.TextSize          = 14
+    btn.Text              = "✗   STOP EVERYTHING"
+    btn.AutoButtonColor   = false
+    btn.BorderSizePixel   = 0
+    btn.ZIndex            = 999
+    btn.Parent            = PG
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, BASE_H / 2)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color        = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness    = 2
+    stroke.Transparency = 0.35
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent       = btn
+
+    local glow = Instance.new("Frame")
+    glow.Name                    = "Glow"
+    glow.Size                    = UDim2.new(1, 12, 1, 12)
+    glow.Position                = UDim2.new(0, -6, 0, -6)
+    glow.BackgroundColor3        = COL_RED
+    glow.BackgroundTransparency  = 0.75
+    glow.BorderSizePixel         = 0
+    glow.ZIndex                  = 998
+    glow.Parent                  = btn
+    local glowCorner = Instance.new("UICorner")
+    glowCorner.CornerRadius = UDim.new(1, 0)
+    glowCorner.Parent = glow
+
+    local dragging, dragStart, startPos, dragMoved = false, nil, nil, false
+    local DRAG_THRESHOLD = 8
+
+    btn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragMoved = false
+            dragStart = i.Position
+            startPos  = btn.Position
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(i)
+        if not dragging then return end
+        if i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch then
+            local d = i.Position - dragStart
+            if math.abs(d.X) > DRAG_THRESHOLD or math.abs(d.Y) > DRAG_THRESHOLD then
+                dragMoved = true
+            end
+            if dragMoved then
+                btn.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + d.X,
+                    startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end
+    end)
+
+    local function stopEverything()
+        getgenv().AutoTP     = false
+        getgenv().AutoLight  = false
+        getgenv().AutoDodge  = false
+        getgenv().AutoBlock  = false
+        getgenv().TPBusy     = false
+        getgenv().Dodging    = false
+        getgenv().Countering = false
+        getgenv().TpToOppDone = false
+        getgenv().StopWebhook = true
+
+        if getgenv().Blocking then
+            getgenv().Blocking = false
+            pcall(function() VIM:SendKeyEvent(false, BLOCK_KEY, false, nil) end)
+        end
+
+        _codeUpdate = true
+        pcall(function() if TPToggle    then TPToggle:Set(false)    end end)
+        pcall(function() if LightToggle then LightToggle:Set(false) end end)
+        pcall(function() if DodgeToggle then DodgeToggle:Set(false) end end)
+        pcall(function() if BlockToggle then BlockToggle:Set(false) end end)
+        _codeUpdate = false
+
+        local bounce = TweenInfo.new(0.12, Enum.EasingStyle.Quad,
+            Enum.EasingDirection.Out, 0, true)
+        TweenService:Create(btn, bounce, {
+            Size = UDim2.fromOffset(BASE_W - 8, BASE_H - 6),
+        }):Play()
+
+        TweenService:Create(btn, TweenInfo.new(0.25), {
+            BackgroundColor3 = COL_GREEN,
+        }):Play()
+        TweenService:Create(glow, TweenInfo.new(0.25), {
+            BackgroundColor3 = COL_GREEN,
+        }):Play()
+        btn.Text = "✓   STOPPED"
+
+        print("[STOP] Everything stopped by user")
+        pcall(function()
+            Rayfield:Notify({
+                Title    = "🛑 STOPPED",
+                Content  = "All automation disabled",
+                Duration = 3,
+                Image    = 4483362458,
+            })
+        end)
+
+        task.delay(1.6, function()
+            if not (btn and btn.Parent) then return end
+            TweenService:Create(btn, TweenInfo.new(0.3), {
+                BackgroundColor3 = COL_RED,
+            }):Play()
+            TweenService:Create(glow, TweenInfo.new(0.3), {
+                BackgroundColor3 = COL_RED,
+            }):Play()
+            btn.Text = "✗   STOP EVERYTHING"
+        end)
+    end
+
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            if dragging and not dragMoved then
+                stopEverything()
+            end
+            dragging = false
+        end
+    end)
+end
+-- ============================================================
