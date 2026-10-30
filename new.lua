@@ -20,12 +20,33 @@ local PADS = {
     ["Pad 4"] = Vector3.new(17, 0, -118),
 }
 
+-- ===== PAD ASSIGNMENT (auto by username) =====
+-- Mỗi account được gán cố định vào 1 pad
+local PAD_GROUPS = {
+    ["Pad 1"] = {
+        ["GHHTWHOWR"]    = true,
+        ["GHfhahfiuaf3"] = true,
+        ["TamMiniMini"]  = true,
+        ["HE4RTSFORJ1"]  = true,
+    },
+    ["Pad 2"] = {
+        ["GHfhahfiuaf2"] = true,
+        ["NoobIsRedI"]   = true,
+        ["RRecruiter1"]  = true,
+        ["ElRusoBB0"]    = true,
+    },
+}
+
 -- ===== TARGET WHITELIST =====
 local TARGET_WHITELIST = {
     ["GHHTWHOWR"]    = true,
     ["GHfhahfiuaf2"] = true,
     ["GHfhahfiuaf3"] = true,
     ["NoobIsRedI"]   = true,
+    ["TamMiniMini"]  = true,
+    ["HE4RTSFORJ1"]  = true,
+    ["RRecruiter1"]  = true,
+    ["ElRusoBB0"]    = true,
 }
 local WHITELIST_LOWER = {}
 for name in pairs(TARGET_WHITELIST) do
@@ -36,7 +57,22 @@ local MY_NAME = LP.Name
 local MY_NAME_LOWER = MY_NAME:lower()
 local IS_MAIN_ACCOUNT = (MY_NAME == MAIN_WEBHOOK_ACCOUNT)
 
-getgenv().SelectedPad = getgenv().SelectedPad or "Pad 1"
+-- ===== AUTO PAD ASSIGNMENT =====
+local MY_PAD = nil
+for padName, accounts in pairs(PAD_GROUPS) do
+    if accounts[MY_NAME] then
+        MY_PAD = padName
+        break
+    end
+end
+
+if MY_PAD then
+    getgenv().SelectedPad = MY_PAD
+    print("[PAD] Auto-assigned: " .. MY_PAD .. " for " .. MY_NAME)
+else
+    getgenv().SelectedPad = getgenv().SelectedPad or "Pad 1"
+    print("[PAD] No group match for " .. MY_NAME .. ", fallback: " .. getgenv().SelectedPad)
+end
 getgenv().PadPosition = PADS[getgenv().SelectedPad] or PADS["Pad 1"]
 
 local function isPad2()
@@ -112,7 +148,6 @@ getgenv().WebhookMode = getgenv().WebhookMode or "MAIN"
 getgenv().LastWebhookResult = "none"
 
 -- ===== TARGET LOCK STATE =====
--- Auto: nếu tên mình nằm trong whitelist -> bật lock, ngược lại -> tắt
 if getgenv().TargetLock == nil then
     getgenv().TargetLock = WHITELIST_LOWER[MY_NAME_LOWER] ~= nil
 end
@@ -122,7 +157,6 @@ getgenv().LastRejectedName = nil
 getgenv().LastRejectedAt = 0
 
 -- ===== WEBHOOK NOTIFY TOGGLES =====
--- Cash mặc định OFF, Spins & Lucky mặc định ON
 if getgenv().NotifyCash  == nil then getgenv().NotifyCash  = false end
 if getgenv().NotifySpins == nil then getgenv().NotifySpins = true  end
 if getgenv().NotifyLucky == nil then getgenv().NotifyLucky = true  end
@@ -175,8 +209,7 @@ if not Rayfield then
     return
 end
 print("[AI v28] Rayfield loaded, HTTP=" .. httpMethod)
-print(string.format("[AI v28] ME=%s | Whitelist: GHHTWHOWR, GHfhahfiuaf2, GHfhahfiuaf3, NoobIsRedI | TargetLock default=%s",
-    MY_NAME, tostring(getgenv().TargetLock)))
+print(string.format("[AI v28] ME=%s | AutoPad=%s | Whitelist: 8 accounts", MY_NAME, tostring(MY_PAD)))
 
 local function checkWebhookReason()
     if getgenv().WebhookMode == "ALL" then return true, "ALL mode" end
@@ -185,8 +218,18 @@ local function checkWebhookReason()
     return true, "main + toggle ON"
 end
 
-local function sendWebhook(payload)
-    local ok, reason = checkWebhookReason()
+-- bypassMode: dùng cho sự kiện quan trọng (disconnect) -> bỏ qua filter MAIN/ALL, chỉ cần toggle ON
+local function sendWebhook(payload, bypassMode)
+    local ok, reason
+    if bypassMode then
+        if not getgenv().WebhookToggle then
+            ok, reason = false, "toggle OFF"
+        else
+            ok, reason = true, "critical (bypass mode check)"
+        end
+    else
+        ok, reason = checkWebhookReason()
+    end
     if not ok then
         getgenv().LastWebhookResult = "skip: " .. reason
         print("[WEBHOOK] skip: " .. reason)
@@ -322,6 +365,100 @@ local function webhookStatsChanged(fields, pos, neg)
     })
 end
 
+-- ============================================================
+-- 🔌 DISCONNECT DETECTION — báo webhook ngay khi player bị disconnect
+-- Dùng nhiều phương pháp song song để tăng độ tin cậy
+-- ============================================================
+do
+    local DISCONNECT_SENT = false
+
+    local function sendDisconnectEmbed(reason)
+        if DISCONNECT_SENT then return end
+        DISCONNECT_SENT = true
+
+        print("[DISCONNECT] Detected: " .. reason)
+
+        if not getgenv().WebhookToggle then
+            print("[DISCONNECT] skipped: webhook toggle OFF")
+            return
+        end
+
+        local uptime = "—"
+        if getgenv().MatchStartTick then
+            local secs = math.floor(tick() - getgenv().MatchStartTick)
+            uptime = string.format("%dm %ds", math.floor(secs / 60), secs % 60)
+        end
+
+        local fields = {
+            { name = "Player",     value = "**" .. MY_NAME .. "**",              inline = true },
+            { name = "Pad",        value = "**" .. tostring(getgenv().SelectedPad) .. "**", inline = true },
+            { name = "Reason",     value = "**" .. reason .. "**",               inline = false },
+            { name = "In Match",   value = tostring(getgenv().InMatch),          inline = true },
+            { name = "Match Time", value = uptime,                               inline = true },
+            { name = "Rejected",   value = tostring(getgenv().RejectedCount or 0), inline = true },
+            { name = "Webhook OK", value = tostring(getgenv().WebhookSent or 0), inline = true },
+            { name = "Webhook KO", value = tostring(getgenv().WebhookFailed or 0), inline = true },
+        }
+
+        -- Bypass mode check: disconnect quan trọng -> gửi cho mọi account (chỉ tôn trọng toggle)
+        sendWebhook({
+            content = "🔌 **" .. MY_NAME .. "** disconnected — " .. reason,
+            embeds = {{
+                title = "🔌 PLAYER DISCONNECTED",
+                color = COLOR_NEG,
+                fields = fields,
+                timestamp = DateTime.now():ToIsoDate(),
+                footer = { text = footerText() },
+            }},
+        }, true)
+    end
+
+    -- Method 1: LocalPlayer bị remove khỏi game (kick / leave / server shutdown)
+    LP.AncestryChanged:Connect(function()
+        if not LP:IsDescendantOf(game) then
+            sendDisconnectEmbed("AncestryChanged (kick/leave)")
+        end
+    end)
+
+    -- Method 2: PlayerRemoving (đôi khi fire cho LocalPlayer)
+    Players.PlayerRemoving:Connect(function(p)
+        if p == LP then
+            sendDisconnectEmbed("PlayerRemoving")
+        end
+    end)
+
+    -- Method 3: Teleport (rời server hiện tại)
+    pcall(function()
+        if LP.OnTeleport then
+            LP.OnTeleport:Connect(function(state)
+                if state == Enum.TeleportState.Started
+                or state == Enum.TeleportState.InProgress then
+                    sendDisconnectEmbed("Teleport (" .. tostring(state) .. ")")
+                end
+            end)
+        end
+    end)
+
+    -- Method 4: LogService — bắt message kick / disconnect
+    pcall(function()
+        local LogService = game:GetService("LogService")
+        LogService.MessageOut:Connect(function(msg, msgType)
+            if msgType ~= Enum.MessageType.MessageError then return end
+            local m = tostring(msg):lower()
+            if m:find("disconnect")
+            or m:find("connection lost")
+            or m:find("lost connection")
+            or m:find("you have been kicked")
+            or m:find("game is closing")
+            or m:find("network error") then
+                sendDisconnectEmbed("LogService: " .. tostring(msg):sub(1, 100))
+            end
+        end)
+    end)
+
+    print("[DISCONNECT] Detection armed (AncestryChanged / PlayerRemoving / OnTeleport / LogService)")
+end
+
 local function getHRP()
     local c = LP.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -365,7 +502,6 @@ local function normalizeName(v)
     return nil
 end
 
--- ===== TARGET LOCK HELPERS =====
 local function readRawOpponentName()
     local raw = readRawOpponent()
     local name = normalizeName(raw)
@@ -379,8 +515,6 @@ local function isWhitelisted(name)
     return WHITELIST_LOWER[name:lower()] ~= nil
 end
 
--- TargetLock ON  -> chỉ trả whitelist (nil = không tính là trận)
--- TargetLock OFF -> trả ai cũng được
 local function readOpponentName()
     local name = readRawOpponentName()
     if not name then return nil end
@@ -472,7 +606,6 @@ local function tpToOpponentOnce()
     return true
 end
 
--- ===== REJECT: reset + TP to pad =====
 local function rejectOpponent(name)
     if getgenv().RejectBusy then return end
     getgenv().RejectBusy = true
@@ -553,6 +686,20 @@ MainTab:CreateDropdown({
         if not v or not PADS[v] then return end
         getgenv().SelectedPad = v
         getgenv().PadPosition = PADS[v]
+
+        -- Cảnh báo nếu user chọn pad khác pad được gán tự động
+        if MY_PAD and v ~= MY_PAD then
+            pcall(function()
+                Rayfield:Notify({
+                    Title = "⚠️ PAD MISMATCH",
+                    Content = "Assigned: " .. MY_PAD .. " | Chọn: " .. v .. " — có thể sai!",
+                    Duration = 5,
+                    Image = 4483362458,
+                })
+            end)
+            warn("[PAD] Mismatch! Assigned=" .. MY_PAD .. " selected=" .. v)
+        end
+
         print(string.format("[PAD] Selected: %s = (%.0f, %.0f, %.0f) | TP-to-opp: %s",
             v, PADS[v].X, PADS[v].Y, PADS[v].Z, isPad2() and "YES" or "NO"))
         pcall(function()
@@ -633,7 +780,6 @@ TargetLockToggle = MainTab:CreateToggle({
     Callback     = uiSetTargetLock,
 })
 
--- ===== WEBHOOK TAB (chỉ giữ toggle + dropdown + test button) =====
 local WebhookTab = Window:CreateTab("Webhook", 4483362458)
 
 WebhookTab:CreateSection("Settings")
@@ -790,7 +936,7 @@ task.spawn(function()
     end
 end)
 
--- ===== TARGET LOCK REJECT (reset + TP to pad) =====
+-- ===== TARGET LOCK REJECT =====
 task.spawn(function()
     local badStart = nil
     while task.wait(0.5) do
@@ -977,7 +1123,7 @@ task.spawn(function()
     end
 end)
 
--- ===== UBG TRACKER (đã bỏ baseline, tôn trọng 3 toggle notify) =====
+-- ===== UBG TRACKER =====
 task.spawn(function()
     waitForUBG(6)
     if not readUBG() then
@@ -1007,7 +1153,6 @@ task.spawn(function()
         local fields = {}
         local pos, neg = 0, 0
 
-        -- Spins
         if curSpins and lastSpins and curSpins ~= lastSpins then
             if getgenv().NotifySpins then
                 local d = curSpins - lastSpins
@@ -1024,7 +1169,6 @@ task.spawn(function()
             if curSpins then lastSpins = curSpins end
         end
 
-        -- Cash
         if curCash and lastCash and curCash ~= lastCash then
             if getgenv().NotifyCash then
                 local d = curCash - lastCash
@@ -1041,7 +1185,6 @@ task.spawn(function()
             if curCash then lastCash = curCash end
         end
 
-        -- Lucky Spins
         if curLucky and lastLucky and curLucky ~= lastLucky then
             if getgenv().NotifyLucky then
                 local d = curLucky - lastLucky
@@ -1073,14 +1216,14 @@ end)
 
 Rayfield:Notify({
     Title = "AI v28 BATTLE",
-    Content = string.format("%s | PAD: %s%s | Lock: %s", MY_NAME, getgenv().SelectedPad,
+    Content = string.format("%s | AutoPad: %s%s | Lock: %s", MY_NAME, getgenv().SelectedPad,
         isPad2() and " (TP)" or " (no TP)",
         getgenv().TargetLock and "ON" or "OFF"),
     Duration = 6,
     Image = 4483362458,
 })
 
-print(string.format("[AI v28] %s | PAD=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | HTTP=%s",
+print(string.format("[AI v28] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | HTTP=%s | DisconnectAlert=ON",
     MY_NAME, getgenv().SelectedPad,
     getgenv().PadPosition.X, getgenv().PadPosition.Y, getgenv().PadPosition.Z,
     isPad2() and "YES" or "NO",
