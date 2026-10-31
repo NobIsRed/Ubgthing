@@ -3,6 +3,10 @@ local LP = Players.LocalPlayer
 local PG = LP:WaitForChild("PlayerGui")
 local VIM = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local LogService = game:GetService("LogService")
+
+local APP_NAME = "Untitle Boxing Game By Nobred"
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1495231530140696768/lyQMU0RhiuHWbVYx7XcaGVsWSkPAxiBUXx5VLXuGlNJSnHR3Zl6oOpvLsPHEvFTXlHSg"
 local WEBHOOK_USERNAME = "UBG Stats"
@@ -20,8 +24,6 @@ local PADS = {
     ["Pad 4"] = Vector3.new(17, 0, -118),
 }
 
--- ===== PAD ASSIGNMENT (auto by username) =====
--- Mỗi account được gán cố định vào 1 pad
 local PAD_GROUPS = {
     ["Pad 1"] = {
         ["GHHTWHOWR"]    = true,
@@ -37,7 +39,6 @@ local PAD_GROUPS = {
     },
 }
 
--- ===== TARGET WHITELIST =====
 local TARGET_WHITELIST = {
     ["GHHTWHOWR"]    = true,
     ["GHfhahfiuaf2"] = true,
@@ -57,7 +58,6 @@ local MY_NAME = LP.Name
 local MY_NAME_LOWER = MY_NAME:lower()
 local IS_MAIN_ACCOUNT = (MY_NAME == MAIN_WEBHOOK_ACCOUNT)
 
--- ===== AUTO PAD ASSIGNMENT =====
 local MY_PAD = nil
 for padName, accounts in pairs(PAD_GROUPS) do
     if accounts[MY_NAME] then
@@ -144,10 +144,10 @@ getgenv().WebhookSent = 0
 getgenv().WebhookFailed = 0
 getgenv().HttpMethod = "?"
 getgenv().WebhookToggle = getgenv().WebhookToggle or true
-getgenv().WebhookMode = getgenv().WebhookMode or "MAIN"
+-- ✅ DEFAULT = ALL accounts
+getgenv().WebhookMode = getgenv().WebhookMode or "ALL"
 getgenv().LastWebhookResult = "none"
 
--- ===== TARGET LOCK STATE =====
 if getgenv().TargetLock == nil then
     getgenv().TargetLock = WHITELIST_LOWER[MY_NAME_LOWER] ~= nil
 end
@@ -156,7 +156,6 @@ getgenv().RejectedCount = getgenv().RejectedCount or 0
 getgenv().LastRejectedName = nil
 getgenv().LastRejectedAt = 0
 
--- ===== WEBHOOK NOTIFY TOGGLES =====
 if getgenv().NotifyCash  == nil then getgenv().NotifyCash  = false end
 if getgenv().NotifySpins == nil then getgenv().NotifySpins = true  end
 if getgenv().NotifyLucky == nil then getgenv().NotifyLucky = true  end
@@ -205,11 +204,11 @@ local function loadRayfield()
 end
 local Rayfield = loadRayfield()
 if not Rayfield then
-    warn("[AI v28] Rayfield fail, stop")
+    warn("[" .. APP_NAME .. "] Rayfield fail, stop")
     return
 end
-print("[AI v28] Rayfield loaded, HTTP=" .. httpMethod)
-print(string.format("[AI v28] ME=%s | AutoPad=%s | Whitelist: 8 accounts", MY_NAME, tostring(MY_PAD)))
+print("[" .. APP_NAME .. "] Rayfield loaded, HTTP=" .. httpMethod)
+print(string.format("[" .. APP_NAME .. "] ME=%s | AutoPad=%s | Whitelist: 8 accounts", MY_NAME, tostring(MY_PAD)))
 
 local function checkWebhookReason()
     if getgenv().WebhookMode == "ALL" then return true, "ALL mode" end
@@ -218,7 +217,6 @@ local function checkWebhookReason()
     return true, "main + toggle ON"
 end
 
--- bypassMode: dùng cho sự kiện quan trọng (disconnect) -> bỏ qua filter MAIN/ALL, chỉ cần toggle ON
 local function sendWebhook(payload, bypassMode)
     local ok, reason
     if bypassMode then
@@ -366,8 +364,7 @@ local function webhookStatsChanged(fields, pos, neg)
 end
 
 -- ============================================================
--- 🔌 DISCONNECT DETECTION — báo webhook ngay khi player bị disconnect
--- Dùng nhiều phương pháp song song để tăng độ tin cậy
+-- 🔌 DISCONNECT DETECTION v2 — improved
 -- ============================================================
 do
     local DISCONNECT_SENT = false
@@ -400,7 +397,6 @@ do
             { name = "Webhook KO", value = tostring(getgenv().WebhookFailed or 0), inline = true },
         }
 
-        -- Bypass mode check: disconnect quan trọng -> gửi cho mọi account (chỉ tôn trọng toggle)
         sendWebhook({
             content = "🔌 **" .. MY_NAME .. "** disconnected — " .. reason,
             embeds = {{
@@ -413,50 +409,66 @@ do
         }, true)
     end
 
-    -- Method 1: LocalPlayer bị remove khỏi game (kick / leave / server shutdown)
+    -- Method 1: AncestryChanged — LocalPlayer bị remove khỏi game
     LP.AncestryChanged:Connect(function()
         if not LP:IsDescendantOf(game) then
             sendDisconnectEmbed("AncestryChanged (kick/leave)")
         end
     end)
 
-    -- Method 2: PlayerRemoving (đôi khi fire cho LocalPlayer)
+    -- Method 2: PlayerRemoving (backup)
     Players.PlayerRemoving:Connect(function(p)
         if p == LP then
             sendDisconnectEmbed("PlayerRemoving")
         end
     end)
 
-    -- Method 3: Teleport (rời server hiện tại)
+    -- Method 3: OnTeleport — bắt mọi state
     pcall(function()
         if LP.OnTeleport then
             LP.OnTeleport:Connect(function(state)
-                if state == Enum.TeleportState.Started
-                or state == Enum.TeleportState.InProgress then
-                    sendDisconnectEmbed("Teleport (" .. tostring(state) .. ")")
-                end
+                sendDisconnectEmbed("Teleport (" .. tostring(state) .. ")")
             end)
         end
     end)
 
-    -- Method 4: LogService — bắt message kick / disconnect
+    -- Method 4: LogService — BROAD filter, ALL message types
     pcall(function()
-        local LogService = game:GetService("LogService")
-        LogService.MessageOut:Connect(function(msg, msgType)
-            if msgType ~= Enum.MessageType.MessageError then return end
+        LogService.MessageOut:Connect(function(msg, _msgType)
             local m = tostring(msg):lower()
             if m:find("disconnect")
+            or m:find("kicked")
             or m:find("connection lost")
             or m:find("lost connection")
-            or m:find("you have been kicked")
             or m:find("game is closing")
-            or m:find("network error") then
-                sendDisconnectEmbed("LogService: " .. tostring(msg):sub(1, 100))
+            or m:find("game closed")
+            or m:find("network error")
+            or m:find("server shutdown")
+            or m:find("server closed")
+            or m:find("shutting down")
+            or m:find("you have been")
+            or m:find("removed from") then
+                sendDisconnectEmbed("Log: " .. tostring(msg):sub(1, 100))
             end
         end)
     end)
 
-    print("[DISCONNECT] Detection armed (AncestryChanged / PlayerRemoving / OnTeleport / LogService)")
+    -- Method 5: Heartbeat watchdog — ngừng 5s = disconnect
+    task.spawn(function()
+        local lastBeat = tick()
+        RunService.Heartbeat:Connect(function()
+            lastBeat = tick()
+        end)
+        while true do
+            task.wait(1)
+            if tick() - lastBeat > 5 then
+                sendDisconnectEmbed("Heartbeat timeout (5s)")
+                break
+            end
+        end
+    end)
+
+    print("[DISCONNECT] v2 armed (Ancestry / PlayerRemoving / OnTeleport / LogBroad / Heartbeat)")
 end
 
 local function getHRP()
@@ -656,17 +668,14 @@ local function rejectOpponent(name)
 end
 
 local Window = Rayfield:CreateWindow({
-    Name = "AI v28 BATTLE",
-    LoadingTitle = "AI v28 BATTLE",
+    Name = APP_NAME,
+    LoadingTitle = APP_NAME,
     LoadingSubtitle = "Loading",
     ConfigurationSaving = { Enabled = false },
     KeySystem = false,
 })
 
 local MainTab = Window:CreateTab("Main", 4483362458)
-MainTab:CreateSection("Account")
-local SelfLabel = MainTab:CreateLabel(
-    string.format("%s | PAD: %s | Opp: none", MY_NAME, getgenv().SelectedPad), 4483362458)
 
 MainTab:CreateSection("Pad Selection")
 
@@ -687,7 +696,6 @@ MainTab:CreateDropdown({
         getgenv().SelectedPad = v
         getgenv().PadPosition = PADS[v]
 
-        -- Cảnh báo nếu user chọn pad khác pad được gán tự động
         if MY_PAD and v ~= MY_PAD then
             pcall(function()
                 Rayfield:Notify({
@@ -709,31 +717,6 @@ MainTab:CreateDropdown({
                 Duration = 2,
                 Image = 4483362458,
             })
-        end)
-    end,
-})
-
-MainTab:CreateButton({
-    Name = "🔄 Teleport về PAD đã chọn",
-    Callback = function()
-        task.spawn(function()
-            local hrp = getHRP()
-            if not hrp then return end
-            local p = getgenv().PadPosition
-            hrp.CFrame = CFrame.new(p.X, p.Y + 50, p.Z)
-            for _ = 1, 20 do
-                if hrp.Position.Y <= p.Y + 1 then break end
-                hrp.CFrame = CFrame.new(p.X, hrp.Position.Y - 5, p.Z)
-                task.wait(0.08)
-            end
-            pcall(function()
-                Rayfield:Notify({
-                    Title = "Teleported",
-                    Content = getgenv().SelectedPad,
-                    Duration = 2,
-                    Image = 4483362458,
-                })
-            end)
         end)
     end,
 })
@@ -856,16 +839,7 @@ WebhookTab:CreateButton({
     end,
 })
 
-task.spawn(function()
-    while task.wait(1) do
-        pcall(function()
-            SelfLabel:Set(string.format("%s | PAD: %s | Opp: %s",
-                MY_NAME, getgenv().SelectedPad, readOpponentName() or "none"))
-        end)
-    end
-end)
-
--- ===== MATCH DETECTION + TP (Pad 2/4) + AUTO COMBO =====
+-- ===== MATCH DETECTION =====
 task.spawn(function()
     local matchEndAt = nil
     while task.wait(0.3) do
@@ -907,7 +881,7 @@ task.spawn(function()
                             end
                             task.wait(0.5)
                         end
-                        warn("[MATCH] " .. getgenv().SelectedPad .. " TP failed after 10s - opponent char chưa load?")
+                        warn("[MATCH] " .. getgenv().SelectedPad .. " TP failed after 10s")
                     end)
                 else
                     print("[MATCH] " .. getgenv().SelectedPad .. " -> không TP, đứng yên")
@@ -1130,9 +1104,7 @@ task.spawn(function()
         print("[UBG] Tracker skip - labels not found")
         return
     end
-    print("[UBG] Tracker active - track spins + cash + lucky (notify: spins="
-        .. tostring(getgenv().NotifySpins) .. " cash=" .. tostring(getgenv().NotifyCash)
-        .. " lucky=" .. tostring(getgenv().NotifyLucky) .. ")")
+    print("[UBG] Tracker active")
     local last = readUBG()
     if not last then return end
 
@@ -1215,23 +1187,26 @@ task.spawn(function()
 end)
 
 Rayfield:Notify({
-    Title = "AI v28 BATTLE",
-    Content = string.format("%s | AutoPad: %s%s | Lock: %s", MY_NAME, getgenv().SelectedPad,
+    Title = APP_NAME,
+    Content = string.format("%s | AutoPad: %s%s | Lock: %s | WH: %s",
+        MY_NAME, getgenv().SelectedPad,
         isPad2() and " (TP)" or " (no TP)",
-        getgenv().TargetLock and "ON" or "OFF"),
+        getgenv().TargetLock and "ON" or "OFF",
+        getgenv().WebhookMode),
     Duration = 6,
     Image = 4483362458,
 })
 
-print(string.format("[AI v28] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | HTTP=%s | DisconnectAlert=ON",
+print(string.format("[" .. APP_NAME .. "] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | WH=%s | HTTP=%s | DisconnectAlert=v2",
     MY_NAME, getgenv().SelectedPad,
     getgenv().PadPosition.X, getgenv().PadPosition.Y, getgenv().PadPosition.Z,
     isPad2() and "YES" or "NO",
     getgenv().TargetLock and "ON" or "OFF",
+    getgenv().WebhookMode,
     httpMethod))
 
 -- ============================================================
--- 💔 FLOATING STOP BUTTON — ✗ / ✓ (bottom-left, mobile)
+-- FLOATING STOP BUTTON
 -- ============================================================
 do
     local UIS = game:GetService("UserInputService")
@@ -1383,4 +1358,3 @@ do
         end
     end)
 end
--- ============================================================
