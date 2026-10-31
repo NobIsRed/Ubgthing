@@ -28,24 +28,28 @@ local PAD_GROUPS = {
         ["GHfhahfiuaf3"] = true,
         ["TamMiniMini"]  = true,
         ["HE4RTSFORJ1"]  = true,
+        ["tristitia006"] = true,
     },
     ["Pad 2"] = {
-        ["GHfhahfiuaf2"] = true,
-        ["NoobIsRedI"]   = true,
-        ["RRecruiter1"]  = true,
-        ["ElRusoBB0"]    = true,
+        ["GHfhahfiuaf2"]       = true,
+        ["NoobIsRedI"]         = true,
+        ["RRecruiter1"]        = true,
+        ["ElRusoBB0"]          = true,
+        ["therealdavidbro770"] = true,
     },
 }
 
 local TARGET_WHITELIST = {
-    ["GHHTWHOWR"]    = true,
-    ["GHfhahfiuaf2"] = true,
-    ["GHfhahfiuaf3"] = true,
-    ["NoobIsRedI"]   = true,
-    ["TamMiniMini"]  = true,
-    ["HE4RTSFORJ1"]  = true,
-    ["RRecruiter1"]  = true,
-    ["ElRusoBB0"]    = true,
+    ["GHHTWHOWR"]          = true,
+    ["GHfhahfiuaf2"]       = true,
+    ["GHfhahfiuaf3"]       = true,
+    ["NoobIsRedI"]         = true,
+    ["TamMiniMini"]        = true,
+    ["HE4RTSFORJ1"]        = true,
+    ["RRecruiter1"]        = true,
+    ["ElRusoBB0"]          = true,
+    ["tristitia006"]       = true,
+    ["therealdavidbro770"] = true,
 }
 local WHITELIST_LOWER = {}
 for name in pairs(TARGET_WHITELIST) do
@@ -142,7 +146,6 @@ getgenv().WebhookSent = 0
 getgenv().WebhookFailed = 0
 getgenv().HttpMethod = "?"
 getgenv().WebhookToggle = getgenv().WebhookToggle or true
--- DEFAULT = ALL accounts
 getgenv().WebhookMode = getgenv().WebhookMode or "ALL"
 getgenv().LastWebhookResult = "none"
 
@@ -206,7 +209,7 @@ if not Rayfield then
     return
 end
 print("[" .. APP_NAME .. "] Rayfield loaded, HTTP=" .. httpMethod)
-print(string.format("[" .. APP_NAME .. "] ME=%s | AutoPad=%s | Whitelist: 8 accounts", MY_NAME, tostring(MY_PAD)))
+print(string.format("[" .. APP_NAME .. "] ME=%s | AutoPad=%s | Whitelist: 10 accounts", MY_NAME, tostring(MY_PAD)))
 
 local function checkWebhookReason()
     if getgenv().WebhookMode == "ALL" then return true, "ALL mode" end
