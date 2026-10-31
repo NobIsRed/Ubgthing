@@ -36,6 +36,7 @@ local PAD_GROUPS = {
         ["RRecruiter1"]        = true,
         ["ElRusoBB0"]          = true,
         ["therealdavidbro770"] = true,
+        ["XxStar_R0guexX2013"] = true,
     },
 }
 
@@ -50,6 +51,7 @@ local TARGET_WHITELIST = {
     ["ElRusoBB0"]          = true,
     ["tristitia006"]       = true,
     ["therealdavidbro770"] = true,
+    ["XxStar_R0guexX2013"] = true,
 }
 local WHITELIST_LOWER = {}
 for name in pairs(TARGET_WHITELIST) do
