@@ -3,8 +3,6 @@ local LP = Players.LocalPlayer
 local PG = LP:WaitForChild("PlayerGui")
 local VIM = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local LogService = game:GetService("LogService")
 
 local APP_NAME = "Untitle Boxing Game By Nobred"
 
@@ -144,7 +142,7 @@ getgenv().WebhookSent = 0
 getgenv().WebhookFailed = 0
 getgenv().HttpMethod = "?"
 getgenv().WebhookToggle = getgenv().WebhookToggle or true
--- ✅ DEFAULT = ALL accounts
+-- DEFAULT = ALL accounts
 getgenv().WebhookMode = getgenv().WebhookMode or "ALL"
 getgenv().LastWebhookResult = "none"
 
@@ -364,111 +362,37 @@ local function webhookStatsChanged(fields, pos, neg)
 end
 
 -- ============================================================
--- 🔌 DISCONNECT DETECTION v2 — improved
+-- DISCONNECT DETECTION — GuiService.ErrorMessageChanged
 -- ============================================================
 do
+    local GuiService = game:GetService("GuiService")
     local DISCONNECT_SENT = false
+    local SCRIPT_ARMED_AT = tick()
+    local GRACE_PERIOD = 8
 
-    local function sendDisconnectEmbed(reason)
+    GuiService.ErrorMessageChanged:Connect(function()
+        local msg = GuiService.ErrorMessage
+        if not msg or msg == "" then return end
         if DISCONNECT_SENT then return end
-        DISCONNECT_SENT = true
+        if (tick() - SCRIPT_ARMED_AT) < GRACE_PERIOD then
+            print("[DISCONNECT] Ignored (grace): " .. tostring(msg):sub(1, 80))
+            return
+        end
 
-        print("[DISCONNECT] Detected: " .. reason)
+        DISCONNECT_SENT = true
+        print("[DISCONNECT] " .. tostring(msg):sub(1, 120))
 
         if not getgenv().WebhookToggle then
             print("[DISCONNECT] skipped: webhook toggle OFF")
             return
         end
 
-        local uptime = "—"
-        if getgenv().MatchStartTick then
-            local secs = math.floor(tick() - getgenv().MatchStartTick)
-            uptime = string.format("%dm %ds", math.floor(secs / 60), secs % 60)
-        end
-
-        local fields = {
-            { name = "Player",     value = "**" .. MY_NAME .. "**",              inline = true },
-            { name = "Pad",        value = "**" .. tostring(getgenv().SelectedPad) .. "**", inline = true },
-            { name = "Reason",     value = "**" .. reason .. "**",               inline = false },
-            { name = "In Match",   value = tostring(getgenv().InMatch),          inline = true },
-            { name = "Match Time", value = uptime,                               inline = true },
-            { name = "Rejected",   value = tostring(getgenv().RejectedCount or 0), inline = true },
-            { name = "Webhook OK", value = tostring(getgenv().WebhookSent or 0), inline = true },
-            { name = "Webhook KO", value = tostring(getgenv().WebhookFailed or 0), inline = true },
-        }
-
         sendWebhook({
-            content = "🔌 **" .. MY_NAME .. "** disconnected — " .. reason,
-            embeds = {{
-                title = "🔌 PLAYER DISCONNECTED",
-                color = COLOR_NEG,
-                fields = fields,
-                timestamp = DateTime.now():ToIsoDate(),
-                footer = { text = footerText() },
-            }},
+            content = MY_NAME .. " got disconnected",
         }, true)
-    end
-
-    -- Method 1: AncestryChanged — LocalPlayer bị remove khỏi game
-    LP.AncestryChanged:Connect(function()
-        if not LP:IsDescendantOf(game) then
-            sendDisconnectEmbed("AncestryChanged (kick/leave)")
-        end
     end)
 
-    -- Method 2: PlayerRemoving (backup)
-    Players.PlayerRemoving:Connect(function(p)
-        if p == LP then
-            sendDisconnectEmbed("PlayerRemoving")
-        end
-    end)
-
-    -- Method 3: OnTeleport — bắt mọi state
-    pcall(function()
-        if LP.OnTeleport then
-            LP.OnTeleport:Connect(function(state)
-                sendDisconnectEmbed("Teleport (" .. tostring(state) .. ")")
-            end)
-        end
-    end)
-
-    -- Method 4: LogService — BROAD filter, ALL message types
-    pcall(function()
-        LogService.MessageOut:Connect(function(msg, _msgType)
-            local m = tostring(msg):lower()
-            if m:find("disconnect")
-            or m:find("kicked")
-            or m:find("connection lost")
-            or m:find("lost connection")
-            or m:find("game is closing")
-            or m:find("game closed")
-            or m:find("network error")
-            or m:find("server shutdown")
-            or m:find("server closed")
-            or m:find("shutting down")
-            or m:find("you have been")
-            or m:find("removed from") then
-                sendDisconnectEmbed("Log: " .. tostring(msg):sub(1, 100))
-            end
-        end)
-    end)
-
-    -- Method 5: Heartbeat watchdog — ngừng 5s = disconnect
-    task.spawn(function()
-        local lastBeat = tick()
-        RunService.Heartbeat:Connect(function()
-            lastBeat = tick()
-        end)
-        while true do
-            task.wait(1)
-            if tick() - lastBeat > 5 then
-                sendDisconnectEmbed("Heartbeat timeout (5s)")
-                break
-            end
-        end
-    end)
-
-    print("[DISCONNECT] v2 armed (Ancestry / PlayerRemoving / OnTeleport / LogBroad / Heartbeat)")
+    print("[DISCONNECT] armed (GuiService.ErrorMessageChanged, grace=" .. GRACE_PERIOD .. "s)")
 end
 
 local function getHRP()
@@ -1197,7 +1121,7 @@ Rayfield:Notify({
     Image = 4483362458,
 })
 
-print(string.format("[" .. APP_NAME .. "] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | WH=%s | HTTP=%s | DisconnectAlert=v2",
+print(string.format("[" .. APP_NAME .. "] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | WH=%s | HTTP=%s | DisconnectAlert=GuiService",
     MY_NAME, getgenv().SelectedPad,
     getgenv().PadPosition.X, getgenv().PadPosition.Y, getgenv().PadPosition.Z,
     isPad2() and "YES" or "NO",
