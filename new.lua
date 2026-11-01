@@ -24,11 +24,13 @@ local PADS = {
 
 local PAD_GROUPS = {
     ["Pad 1"] = {
-        ["GHHTWHOWR"]    = true,
-        ["GHfhahfiuaf3"] = true,
-        ["TamMiniMini"]  = true,
-        ["HE4RTSFORJ1"]  = true,
-        ["tristitia006"] = true,
+        ["GHHTWHOWR"]          = true,
+        ["GHfhahfiuaf3"]       = true,
+        ["TamMiniMini"]        = true,
+        ["HE4RTSFORJ1"]        = true,
+        ["tristitia006"]       = true,
+        ["XxStar_R0guexX2013"] = true,
+        ["torosushie"]         = true,
     },
     ["Pad 2"] = {
         ["GHfhahfiuaf2"]       = true,
@@ -36,7 +38,8 @@ local PAD_GROUPS = {
         ["RRecruiter1"]        = true,
         ["ElRusoBB0"]          = true,
         ["therealdavidbro770"] = true,
-        ["XxStar_R0guexX2013"] = true,
+        ["MannsLease_844"]     = true,
+        ["IraciDrane_670"]     = true,
     },
 }
 
@@ -46,12 +49,15 @@ local TARGET_WHITELIST = {
     ["GHfhahfiuaf3"]       = true,
     ["NoobIsRedI"]         = true,
     ["TamMiniMini"]        = true,
-    ["HE4RTSFORJ1"]        = true,
     ["RRecruiter1"]        = true,
+    ["HE4RTSFORJ1"]        = true,
     ["ElRusoBB0"]          = true,
     ["tristitia006"]       = true,
     ["therealdavidbro770"] = true,
     ["XxStar_R0guexX2013"] = true,
+    ["MannsLease_844"]     = true,
+    ["torosushie"]         = true,
+    ["IraciDrane_670"]     = true,
 }
 local WHITELIST_LOWER = {}
 for name in pairs(TARGET_WHITELIST) do
@@ -211,7 +217,7 @@ if not Rayfield then
     return
 end
 print("[" .. APP_NAME .. "] Rayfield loaded, HTTP=" .. httpMethod)
-print(string.format("[" .. APP_NAME .. "] ME=%s | AutoPad=%s | Whitelist: 10 accounts", MY_NAME, tostring(MY_PAD)))
+print(string.format("[" .. APP_NAME .. "] ME=%s | AutoPad=%s | Whitelist: 14 accounts", MY_NAME, tostring(MY_PAD)))
 
 local function checkWebhookReason()
     if getgenv().WebhookMode == "ALL" then return true, "ALL mode" end
