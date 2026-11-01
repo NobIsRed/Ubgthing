@@ -165,9 +165,10 @@ getgenv().RejectedCount = getgenv().RejectedCount or 0
 getgenv().LastRejectedName = nil
 getgenv().LastRejectedAt = 0
 
-if getgenv().NotifyCash  == nil then getgenv().NotifyCash  = false end
-if getgenv().NotifySpins == nil then getgenv().NotifySpins = true  end
-if getgenv().NotifyLucky == nil then getgenv().NotifyLucky = true  end
+if getgenv().NotifyCash        == nil then getgenv().NotifyCash        = false end
+if getgenv().NotifySpins       == nil then getgenv().NotifySpins       = true  end
+if getgenv().NotifyLucky       == nil then getgenv().NotifyLucky       = true  end
+if getgenv().NotifyLuckyCrate  == nil then getgenv().NotifyLuckyCrate  = true  end
 
 local httpRequest, httpMethod = nil, "none"
 for _, c in ipairs({
@@ -290,6 +291,13 @@ local function deepFind(root, ...)
     return root
 end
 
+-- Lucky Crates (GloveShop) — optional path
+local function readLuckyCrate()
+    local lc = deepFind(PG, "Main", "GloveShop", "Tab", "Container", "Crate", "Lucky", "SpinButton", "Earned")
+    if not lc then return nil end
+    return lc.Text
+end
+
 local function readUBG()
     local ss = deepFind(PG, "Main", "StyleShop")
     if not ss then return nil end
@@ -297,7 +305,12 @@ local function readUBG()
     local c = deepFind(ss, "Money", "Cash")
     local l = deepFind(ss, "LuckySpin", "SpinButton", "Earned")
     if not (s and c and l) then return nil end
-    return { spins = s.Text, cash = c.Text, lucky = l.Text }
+    return {
+        spins      = s.Text,
+        cash       = c.Text,
+        lucky      = l.Text,
+        luckyCrate = readLuckyCrate(),
+    }
 end
 
 local function waitForUBG(t)
@@ -341,15 +354,23 @@ end
 local function webhookCurrently()
     local ubg = readUBG()
     if not ubg then return false, "no UBG labels" end
+    local fields = {
+        { name = "Spins",       value = "**" .. (ubg.spins ~= "" and ubg.spins or "?") .. "**", inline = true },
+        { name = "Cash",        value = "**" .. (ubg.cash  ~= "" and ubg.cash  or "?") .. "**", inline = true },
+        { name = "Lucky Spins", value = "**" .. (ubg.lucky ~= "" and ubg.lucky or "?") .. "**", inline = true },
+    }
+    if ubg.luckyCrate then
+        table.insert(fields, {
+            name = "Lucky Crates",
+            value = "**" .. (ubg.luckyCrate ~= "" and ubg.luckyCrate or "?") .. "**",
+            inline = true,
+        })
+    end
     return sendWebhook({
         embeds = {{
             title = "UBG Stats - Currently",
             color = COLOR_CURRENT,
-            fields = {
-                { name = "Spins", value = "**" .. (ubg.spins ~= "" and ubg.spins or "?") .. "**", inline = true },
-                { name = "Cash", value = "**" .. (ubg.cash ~= "" and ubg.cash or "?") .. "**", inline = true },
-                { name = "Lucky Spins", value = "**" .. (ubg.lucky ~= "" and ubg.lucky or "?") .. "**", inline = true },
-            },
+            fields = fields,
             timestamp = DateTime.now():ToIsoDate(),
             footer = { text = footerText() },
         }},
@@ -757,6 +778,15 @@ WebhookTab:CreateToggle({
     end,
 })
 
+WebhookTab:CreateToggle({
+    Name = "Thông báo Lucky Crates",
+    CurrentValue = getgenv().NotifyLuckyCrate,
+    Callback = function(v)
+        getgenv().NotifyLuckyCrate = v
+        print("[NOTIFY] Lucky Crates -> " .. tostring(v))
+    end,
+})
+
 WebhookTab:CreateSection("Tools")
 
 WebhookTab:CreateButton({
@@ -1043,9 +1073,10 @@ task.spawn(function()
     local last = readUBG()
     if not last then return end
 
-    local lastSpins = parseNum(last.spins)
-    local lastCash  = parseNum(last.cash)
-    local lastLucky = parseNum(last.lucky)
+    local lastSpins      = parseNum(last.spins)
+    local lastCash       = parseNum(last.cash)
+    local lastLucky      = parseNum(last.lucky)
+    local lastLuckyCrate = parseNum(last.luckyCrate)
 
     getgenv().StopWebhook = false
     while not getgenv().StopWebhook do
@@ -1053,9 +1084,10 @@ task.spawn(function()
         local cur = readUBG()
         if not cur then break end
 
-        local curSpins = parseNum(cur.spins)
-        local curCash  = parseNum(cur.cash)
-        local curLucky = parseNum(cur.lucky)
+        local curSpins      = parseNum(cur.spins)
+        local curCash       = parseNum(cur.cash)
+        local curLucky      = parseNum(cur.lucky)
+        local curLuckyCrate = parseNum(cur.luckyCrate)
 
         local fields = {}
         local pos, neg = 0, 0
@@ -1106,6 +1138,22 @@ task.spawn(function()
             lastLucky = curLucky
         else
             if curLucky then lastLucky = curLucky end
+        end
+
+        if curLuckyCrate and lastLuckyCrate and curLuckyCrate ~= lastLuckyCrate then
+            if getgenv().NotifyLuckyCrate then
+                local d = curLuckyCrate - lastLuckyCrate
+                if d >= 0 then pos = pos + 1 else neg = neg + 1 end
+                table.insert(fields, {
+                    name = "Lucky Crates",
+                    value = ("**%s%s** `%s -> %s`"):format(
+                        d >= 0 and "+" or "", fmtNum(d),
+                        fmtNum(lastLuckyCrate), fmtNum(curLuckyCrate)),
+                })
+            end
+            lastLuckyCrate = curLuckyCrate
+        else
+            if curLuckyCrate then lastLuckyCrate = curLuckyCrate end
         end
 
         if #fields > 0 then
