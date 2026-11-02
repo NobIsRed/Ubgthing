@@ -169,6 +169,7 @@ if getgenv().NotifyCash        == nil then getgenv().NotifyCash        = false e
 if getgenv().NotifySpins       == nil then getgenv().NotifySpins       = true  end
 if getgenv().NotifyLucky       == nil then getgenv().NotifyLucky       = true  end
 if getgenv().NotifyLuckyCrate  == nil then getgenv().NotifyLuckyCrate  = true  end
+if getgenv().NotifyDisconnect  == nil then getgenv().NotifyDisconnect  = true  end
 
 local httpRequest, httpMethod = nil, "none"
 for _, c in ipairs({
@@ -394,7 +395,8 @@ local function webhookStatsChanged(fields, pos, neg)
 end
 
 -- ============================================================
--- DISCONNECT DETECTION — GuiService.ErrorMessageChanged
+-- DISCONNECT DETECTION — 4 triggers (PlayerRemoving / AncestryChanged /
+--                         ChildRemoved / GuiService.ErrorMessageChanged)
 -- ============================================================
 do
     local GuiService = game:GetService("GuiService")
@@ -402,29 +404,50 @@ do
     local SCRIPT_ARMED_AT = tick()
     local GRACE_PERIOD = 8
 
+    local function reportDisconnect(sourceMsg)
+        if DISCONNECT_SENT then return end
+        if not getgenv().NotifyDisconnect then
+            print("[DISCONNECT] skipped: NotifyDisconnect toggle OFF")
+            return
+        end
+        if not getgenv().WebhookToggle then
+            print("[DISCONNECT] skipped: WebhookToggle OFF")
+            return
+        end
+        DISCONNECT_SENT = true
+        print("[DISCONNECT] " .. tostring(sourceMsg or ""):sub(1, 120))
+        sendWebhook({
+            content = string.format("**%s** got disconnect/kick, please rejoin.", MY_NAME),
+        }, true)
+    end
+
+    -- 1) PlayerRemoving - main path
+    Players.PlayerRemoving:Connect(function(p)
+        if p == LP then reportDisconnect("PlayerRemoving") end
+    end)
+
+    -- 2) AncestryChanged - fallback for sudden kicks
+    LP.AncestryChanged:Connect(function(_, parent)
+        if not parent then reportDisconnect("AncestryChanged (parent=nil)") end
+    end)
+
+    -- 3) ChildRemoved - extra fallback
+    Players.ChildRemoved:Connect(function(p)
+        if p == LP then reportDisconnect("ChildRemoved") end
+    end)
+
+    -- 4) GuiService.ErrorMessageChanged - kick message detection (with grace)
     GuiService.ErrorMessageChanged:Connect(function()
         local msg = GuiService.ErrorMessage
         if not msg or msg == "" then return end
-        if DISCONNECT_SENT then return end
         if (tick() - SCRIPT_ARMED_AT) < GRACE_PERIOD then
             print("[DISCONNECT] Ignored (grace): " .. tostring(msg):sub(1, 80))
             return
         end
-
-        DISCONNECT_SENT = true
-        print("[DISCONNECT] " .. tostring(msg):sub(1, 120))
-
-        if not getgenv().WebhookToggle then
-            print("[DISCONNECT] skipped: webhook toggle OFF")
-            return
-        end
-
-        sendWebhook({
-            content = MY_NAME .. " got disconnected",
-        }, true)
+        reportDisconnect(msg)
     end)
 
-    print("[DISCONNECT] armed (GuiService.ErrorMessageChanged, grace=" .. GRACE_PERIOD .. "s)")
+    print("[DISCONNECT] armed (PlayerRemoving + AncestryChanged + ChildRemoved + GuiService, grace=" .. GRACE_PERIOD .. "s)")
 end
 
 local function getHRP()
@@ -784,6 +807,15 @@ WebhookTab:CreateToggle({
     Callback = function(v)
         getgenv().NotifyLuckyCrate = v
         print("[NOTIFY] Lucky Crates -> " .. tostring(v))
+    end,
+})
+
+WebhookTab:CreateToggle({
+    Name = "Thông báo Disconnect",
+    CurrentValue = getgenv().NotifyDisconnect,
+    Callback = function(v)
+        getgenv().NotifyDisconnect = v
+        print("[NOTIFY] Disconnect -> " .. tostring(v))
     end,
 })
 
@@ -1180,7 +1212,7 @@ Rayfield:Notify({
     Image = 4483362458,
 })
 
-print(string.format("[" .. APP_NAME .. "] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | WH=%s | HTTP=%s | DisconnectAlert=GuiService",
+print(string.format("[" .. APP_NAME .. "] %s | AutoPad=%s (%.0f,%.0f,%.0f) | TP-to-opp=%s | Lock=%s | WH=%s | HTTP=%s | DisconnectAlert=4-triggers",
     MY_NAME, getgenv().SelectedPad,
     getgenv().PadPosition.X, getgenv().PadPosition.Y, getgenv().PadPosition.Z,
     isPad2() and "YES" or "NO",
