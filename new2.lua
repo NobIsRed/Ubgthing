@@ -1017,6 +1017,10 @@ local function buildCustomUI()
                 oPad.PaddingBottom = UDim.new(0, S(4))
                 oPad.Parent = optionsHolder
 
+                -- Forward declaration: option callbacks need the local collapse function.
+                local expanded = false
+                local collapse
+
                 for i, opt in ipairs(options) do
                     local ob = Instance.new("TextButton")
                     ob.Size = UDim2.new(1, 0, 0, OPT_H)
@@ -1052,10 +1056,9 @@ local function buildCustomUI()
                 end
 
                 -- Expand / collapse logic
-                local expanded = false
                 local optsH = #options * (OPT_H + S(2)) + S(4)
 
-                local function collapse()
+                collapse = function()
                     if not expanded then return end
                     expanded = false
                     tween(card, { Size = UDim2.new(1, -S(6), 0, HEADER_H) }, 0.2)
